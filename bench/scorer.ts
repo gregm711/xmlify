@@ -163,17 +163,32 @@ function matchCalls(
 /**
  * Score argument accuracy between actual and expected (0-1).
  * Skips expected fields with value `undefined` (wildcard).
+ *
+ * Supports BFCL-style `_acceptable` metadata where each argument
+ * has an array of acceptable values (any match counts as correct).
  */
 function scoreArguments(
   actual: Record<string, unknown>,
   expected: Record<string, unknown>,
 ): number {
-  const keys = Object.keys(expected).filter((k) => expected[k] !== undefined);
+  const keys = Object.keys(expected).filter(
+    (k) => k !== "_acceptable" && expected[k] !== undefined,
+  );
   if (keys.length === 0) return 1;
+
+  // Check for BFCL-style acceptable values
+  const acceptable = (expected as Record<string, unknown>)._acceptable as
+    | Record<string, unknown[]>
+    | undefined;
 
   let matches = 0;
   for (const key of keys) {
-    if (deepEqual(actual[key], expected[key])) {
+    if (acceptable?.[key]) {
+      // BFCL mode: check if actual matches ANY acceptable value
+      const acceptableVals = acceptable[key];
+      const isMatch = acceptableVals.some((v) => deepEqual(actual[key], v));
+      if (isMatch) matches++;
+    } else if (deepEqual(actual[key], expected[key])) {
       matches++;
     }
   }

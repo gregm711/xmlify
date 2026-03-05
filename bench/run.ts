@@ -6,32 +6,32 @@
  *   # Dry run with sample suite (no API calls)
  *   npm run bench:dry
  *
- *   # Run sample suite against Anthropic
- *   ANTHROPIC_API_KEY=sk-... npm run bench -- --model anthropic:claude-sonnet-4-6
+ *   # Run BFCL simple category (first 10 cases) against Gemini Flash-Lite via OpenRouter
+ *   OPENROUTER_API_KEY=... npm run bench -- \
+ *     --suite bfcl:simple --limit 10 --verbose \
+ *     --model openrouter:google/gemini-3.1-flash-lite-preview
+ *
+ *   # Run full BFCL simple + multiple categories
+ *   npm run bench -- --suite bfcl:simple,multiple --model openrouter:google/gemini-3.1-flash-lite-preview
  *
  *   # Run against multiple models
  *   npm run bench -- --model anthropic:claude-sonnet-4-6 --model openai:gpt-4o-mini
  *
  *   # Run all 3 modes (json-native, xml-text, xml-dual)
- *   npm run bench -- --model anthropic:claude-sonnet-4-6 --modes all
+ *   npm run bench -- --model openrouter:google/gemini-3.1-flash-lite-preview --modes all
  *
- *   # Load a custom suite from JSON
- *   npm run bench -- --suite path/to/suite.json --model anthropic:claude-sonnet-4-6
+ *   # Load a custom suite from JSON file
+ *   npm run bench -- --suite file:path/to/suite.json --model anthropic:claude-sonnet-4-6
  *
- *   # Load a BFCL JSONL file
- *   npm run bench -- --suite bfcl:path/to/data.jsonl --model openai:gpt-4o-mini
- *
- *   # Limit to first 10 cases, verbose output, save results
- *   npm run bench -- --model anthropic:claude-sonnet-4-6 --limit 10 --verbose --out bench/results
- *
- *   # Filter by category
- *   npm run bench -- --model anthropic:claude-sonnet-4-6 --category nested --category enum
+ *   # Limit to first N cases, verbose output, save results
+ *   npm run bench -- --model openrouter:google/gemini-3.1-flash-lite-preview --limit 10 --verbose --out bench/results
  */
 
 import { runBenchmark } from "./runner.js";
 import { reportResults } from "./reporter.js";
 import { sampleSuite } from "./suites/sample.js";
-import { loadSuiteFromFile, loadBFCLFile } from "./suites/loader.js";
+import { loadSuiteFromFile } from "./suites/loader.js";
+import { loadBFCLCategories } from "./suites/bfcl.js";
 import type { ModelAdapter, RunMode, BenchmarkSuite, RunConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -78,8 +78,13 @@ if (!suiteSpec) {
   suite = sampleSuite;
   console.log("Using built-in sample suite (pass --suite to use a custom one)");
 } else if (suiteSpec.startsWith("bfcl:")) {
-  suite = loadBFCLFile(suiteSpec.slice(5));
+  // bfcl:simple or bfcl:simple,multiple,parallel
+  const cats = suiteSpec.slice(5).split(",");
+  suite = loadBFCLCategories(cats);
+} else if (suiteSpec.startsWith("file:")) {
+  suite = loadSuiteFromFile(suiteSpec.slice(5));
 } else {
+  // Try as file path
   suite = loadSuiteFromFile(suiteSpec);
 }
 
@@ -90,8 +95,13 @@ console.log(`Suite: ${suite.name} (${suite.cases.length} cases)`);
 // ---------------------------------------------------------------------------
 
 async function loadModel(spec: string): Promise<ModelAdapter> {
-  const [provider, ...rest] = spec.split(":");
-  const modelId = rest.join(":") || undefined;
+  // Split on first colon only for providers like openrouter:google/model-name
+  const colonIdx = spec.indexOf(":");
+  if (colonIdx === -1) {
+    throw new Error(`Invalid model spec "${spec}". Use provider:model-id`);
+  }
+  const provider = spec.slice(0, colonIdx);
+  const modelId = spec.slice(colonIdx + 1) || undefined;
 
   switch (provider) {
     case "anthropic": {
@@ -106,9 +116,13 @@ async function loadModel(spec: string): Promise<ModelAdapter> {
       const { createGoogleAdapter } = await import("./adapters/google.js");
       return createGoogleAdapter(modelId);
     }
+    case "openrouter": {
+      const { createOpenRouterAdapter } = await import("./adapters/openrouter.js");
+      return createOpenRouterAdapter(modelId!);
+    }
     default:
       throw new Error(
-        `Unknown provider "${provider}". Use anthropic:model, openai:model, or google:model`,
+        `Unknown provider "${provider}". Use anthropic:, openai:, google:, or openrouter:`,
       );
   }
 }
@@ -116,7 +130,6 @@ async function loadModel(spec: string): Promise<ModelAdapter> {
 let models: ModelAdapter[];
 
 if (dryRun && modelSpecs.length === 0) {
-  // For dry run, provide a fake model
   models = [
     {
       name: "dry-run-model",
@@ -128,6 +141,7 @@ if (dryRun && modelSpecs.length === 0) {
   console.error(
     "\nNo models specified. Use --model provider:model-id\n" +
       "Examples:\n" +
+      "  --model openrouter:google/gemini-3.1-flash-lite-preview\n" +
       "  --model anthropic:claude-sonnet-4-6\n" +
       "  --model openai:gpt-4o-mini\n" +
       "  --model google:gemini-2.5-flash\n",
