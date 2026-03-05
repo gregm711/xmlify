@@ -4,3 +4,10 @@ dist/
 .env
 bench/data/
 bench/results/
+tau-bench/
+python/__pycache__/
+python/xmlify/__pycache__/
+python/tests/__pycache__/
+python/.pytest_cache/
+python/*.egg-info/
+__pycache__/
