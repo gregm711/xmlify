@@ -33,7 +33,7 @@ export function scoreToolCalls(
   for (const m of matched) {
     if (!m.actual || !m.expected) continue;
     totalPairs++;
-    totalArgScore += scoreArguments(m.actual.arguments, m.expected.arguments);
+    totalArgScore += scoreArguments(m.actual.arguments, m.expected);
   }
 
   const argAccuracy = totalPairs > 0 ? totalArgScore / totalPairs : 0;
@@ -135,7 +135,7 @@ function matchCalls(
       if (usedExpected.has(i)) continue;
       if (expected[i].name !== act.name) continue;
 
-      const argScore = scoreArguments(act.arguments, expected[i].arguments);
+      const argScore = scoreArguments(act.arguments, expected[i]);
       if (argScore > bestArgScore) {
         bestArgScore = argScore;
         bestIdx = i;
@@ -166,25 +166,32 @@ function matchCalls(
  *
  * Supports BFCL-style `_acceptable` metadata where each argument
  * has an array of acceptable values (any match counts as correct).
+ * In BFCL, an acceptable value of "" means the arg is optional —
+ * if the model omits it, that's correct.
  */
 function scoreArguments(
   actual: Record<string, unknown>,
-  expected: Record<string, unknown>,
+  expectedCall: ExpectedToolCall,
 ): number {
-  const keys = Object.keys(expected).filter(
-    (k) => k !== "_acceptable" && expected[k] !== undefined,
-  );
-  if (keys.length === 0) return 1;
-
-  // Check for BFCL-style acceptable values
-  const acceptable = (expected as Record<string, unknown>)._acceptable as
+  const expected = expectedCall.arguments;
+  const acceptable = (expectedCall as Record<string, unknown>)._acceptable as
     | Record<string, unknown[]>
     | undefined;
+
+  // Filter keys: skip undefined, skip BFCL-optional args the model omitted
+  const keys = Object.keys(expected).filter((k) => {
+    if (expected[k] === undefined) return false;
+    // In BFCL, acceptable values containing "" means the arg is optional.
+    // If the model didn't provide it, skip it (not a penalty).
+    if (acceptable?.[k]?.includes("") && !(k in actual)) return false;
+    return true;
+  });
+
+  if (keys.length === 0) return 1;
 
   let matches = 0;
   for (const key of keys) {
     if (acceptable?.[key]) {
-      // BFCL mode: check if actual matches ANY acceptable value
       const acceptableVals = acceptable[key];
       const isMatch = acceptableVals.some((v) => deepEqual(actual[key], v));
       if (isMatch) matches++;
@@ -199,6 +206,20 @@ function scoreArguments(
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null) return false;
+
+  // Loose numeric comparison (model might return "9.8" vs 9.8)
+  if (
+    (typeof a === "number" && typeof b === "string") ||
+    (typeof a === "string" && typeof b === "number")
+  ) {
+    return Number(a) === Number(b) && !isNaN(Number(a));
+  }
+
+  // Normalize strings before comparing (handles math notation variants like ^ vs **)
+  if (typeof a === "string" && typeof b === "string") {
+    return normalizeString(a) === normalizeString(b);
+  }
+
   if (typeof a !== typeof b) return false;
 
   if (Array.isArray(a) && Array.isArray(b)) {
@@ -215,11 +236,16 @@ function deepEqual(a: unknown, b: unknown): boolean {
     return aKeys.every((key, i) => key === bKeys[i] && deepEqual(aObj[key], bObj[key]));
   }
 
-  // Loose numeric comparison (model might return "5" vs 5)
-  if (typeof a === "number" && typeof b === "string") return a === Number(b);
-  if (typeof a === "string" && typeof b === "number") return Number(a) === b;
-
   return false;
+}
+
+/** Normalize math/syntax variants so equivalent expressions match. */
+function normalizeString(s: string): string {
+  return s
+    .toLowerCase()            // case-insensitive ("Sculpture" vs "sculpture")
+    .replace(/\*\*/g, "^")   // x**2 → x^2
+    .replace(/\s+/g, " ")    // collapse whitespace
+    .trim();
 }
 
 function avg(nums: number[]): number {

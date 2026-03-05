@@ -68,6 +68,58 @@ describe("scoreToolCalls", () => {
     expect(isPass(score)).toBe(true);
   });
 
+  it("handles BFCL optional args (acceptable includes empty string)", () => {
+    const score = scoreToolCalls(
+      [{ name: "math.hypot", arguments: { x: 4, y: 5 } }],
+      [
+        {
+          name: "math.hypot",
+          arguments: { x: 4, y: 5, z: 0 },
+          _acceptable: { x: [4], y: [5], z: ["", 0] },
+        } as any,
+      ],
+    );
+    expect(score.nameMatch).toBe(true);
+    expect(score.countMatch).toBe(true);
+    // z is optional (acceptable includes ""), model omitted it — should pass
+    expect(score.argAccuracy).toBe(1);
+    expect(isPass(score)).toBe(true);
+  });
+
+  it("handles BFCL acceptable value alternatives", () => {
+    const score = scoreToolCalls(
+      [{ name: "calc", arguments: { unit: "meters" } }],
+      [
+        {
+          name: "calc",
+          arguments: { unit: "meters" },
+          _acceptable: { unit: ["meters", "m", ""] },
+        } as any,
+      ],
+    );
+    expect(isPass(score)).toBe(true);
+  });
+
+  it("handles string/number type coercion (9.8 vs '9.8')", () => {
+    const score = scoreToolCalls(
+      [{ name: "physics", arguments: { gravity: "9.8" } }],
+      [{ name: "physics", arguments: { gravity: 9.8 } }],
+    );
+    expect(score.nameMatch).toBe(true);
+    expect(score.argAccuracy).toBe(1);
+    expect(isPass(score)).toBe(true);
+  });
+
+  it("handles math notation variants (^ vs **)", () => {
+    const score = scoreToolCalls(
+      [{ name: "calc", arguments: { expr: "x^2 + 3" } }],
+      [{ name: "calc", arguments: { expr: "x**2 + 3" } }],
+    );
+    expect(score.nameMatch).toBe(true);
+    expect(score.argAccuracy).toBe(1);
+    expect(isPass(score)).toBe(true);
+  });
+
   it("handles partial argument matches", () => {
     const score = scoreToolCalls(
       [

@@ -73,6 +73,9 @@ function parseXmlElement(
   }
 
   for (const name of names) {
+    // Skip <item> tags — they're array children, not object properties
+    if (name === "item") continue;
+
     // Find first <name...>content</name> for this element name
     const contentPattern = new RegExp(
       `<${escapeRegex(name)}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escapeRegex(name)}>`,
@@ -135,17 +138,48 @@ function parseArray(content: string, itemSchema?: JsonSchema): unknown[] {
     }
   }
 
+  // Fallback: if no <item> tags found, try to parse inline values
+  // Models emit arrays as "3,4,5", "[3, 4, 5]", '["a","b"]', or "4 ft x 4 ft"
+  if (items.length === 0 && content.trim().length > 0) {
+    let raw = content.trim();
+
+    // Strip JSON-style brackets if present
+    if (raw.startsWith("[") && raw.endsWith("]")) {
+      raw = raw.slice(1, -1);
+    }
+
+    // Try splitting by comma first, then by " x " (dimension pattern)
+    let parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+    if (parts.length <= 1 && /\bx\b/i.test(raw)) {
+      parts = raw.split(/\s*x\s*/i).map((s) => s.trim()).filter((s) => s.length > 0);
+    }
+
+    if (parts.length > 0) {
+      for (const part of parts) {
+        // Strip JSON-style quotes around string values ("a" → a)
+        let cleaned = part.replace(/^["'](.*)["']$/, "$1");
+        // If schema expects a number, extract leading number from strings like "4 ft"
+        if (itemSchema?.type === "number" || itemSchema?.type === "integer") {
+          const numMatch = cleaned.match(/^-?\d+(?:\.\d+)?/);
+          if (numMatch) cleaned = numMatch[0];
+        }
+        items.push(coerceScalar(cleaned, itemSchema));
+      }
+    }
+  }
+
   return items;
 }
 
 function coerceScalar(value: string, schema?: JsonSchema): unknown {
   const unescaped = unescapeXml(value);
+  const lower = unescaped.toLowerCase();
 
   if (!schema?.type) {
-    // Best-effort type inference
-    if (unescaped === "true") return true;
-    if (unescaped === "false") return false;
-    if (unescaped === "null" || unescaped === "") return null;
+    // Best-effort type inference (case-insensitive for booleans)
+    if (lower === "true") return true;
+    if (lower === "false") return false;
+    if (lower === "null" || unescaped === "") return null;
     const num = Number(unescaped);
     if (!isNaN(num) && unescaped !== "") return num;
     return unescaped;
@@ -156,7 +190,7 @@ function coerceScalar(value: string, schema?: JsonSchema): unknown {
     case "integer":
       return Number(unescaped);
     case "boolean":
-      return unescaped === "true" || unescaped === "1";
+      return lower === "true" || unescaped === "1";
     case "null":
       return null;
     default:
