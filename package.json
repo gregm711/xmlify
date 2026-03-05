@@ -14,7 +14,9 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench": "tsx bench/run.ts",
+    "bench:dry": "tsx bench/run.ts --dry-run"
   },
   "keywords": [
     "llm",
@@ -28,6 +30,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
